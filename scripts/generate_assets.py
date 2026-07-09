@@ -30,6 +30,12 @@ BG_GRAY = (65, 65, 65)      # sampled from reference image (bottom band)
 HOUR_COLOR = (255, 255, 255)
 MINUTE_COLOR = (0, 0, 0)
 
+# Analog second hand: thin, muted, sits behind the digits.
+HAND_LENGTH = 195
+HAND_WIDTH = 6
+HAND_HUB_RADIUS = 7
+HAND_COLOR = (120, 120, 128, 170)
+
 FONT_CANDIDATES = [
     "/System/Library/Fonts/SFCompactRounded.ttf",
     "/System/Library/Fonts/Supplemental/Arial Black.ttf",
@@ -117,6 +123,30 @@ def render_digit_set(font_path, target_h, color, out_prefix):
     return canvas_h, widths
 
 
+def render_second_hand(out_path):
+    """Hand image points straight up (12 o'clock, angle=0), pivot at the
+    hub center. Returns (pos_x, pos_y) to place the image so the hub lands
+    exactly on the screen center (240, 240)."""
+    canvas_w = HAND_HUB_RADIUS * 2 + 4
+    canvas_h = HAND_LENGTH + HAND_HUB_RADIUS + 4
+    img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    pivot_x = canvas_w / 2
+    pivot_y = canvas_h - HAND_HUB_RADIUS - 2
+
+    draw.rounded_rectangle(
+        [pivot_x - HAND_WIDTH / 2, 2, pivot_x + HAND_WIDTH / 2, pivot_y],
+        radius=HAND_WIDTH / 2,
+        fill=HAND_COLOR,
+    )
+    draw.ellipse(
+        [pivot_x - HAND_HUB_RADIUS, pivot_y - HAND_HUB_RADIUS, pivot_x + HAND_HUB_RADIUS, pivot_y + HAND_HUB_RADIUS],
+        fill=HAND_COLOR,
+    )
+    img.save(out_path)
+    return CENTER - pivot_x, CENTER - pivot_y
+
+
 def render_bg(split_y, out_path):
     bg = Image.new("RGB", (SCREEN, SCREEN), BG_BLACK)
     draw = ImageDraw.Draw(bg)
@@ -134,8 +164,18 @@ def render_icon(h_row, out_path, size=248):
     out.save(out_path)
 
 
-def compose_scene(h_row, hour_str, minute_str, debug=False):
+def compose_scene(h_row, hour_str, minute_str, debug=False, hand_angle=None, hand_pos=None):
     bg = Image.open(os.path.join(ASSETS_DIR, "bg.png")).convert("RGBA")
+
+    if hand_angle is not None:
+        hand = Image.open(os.path.join(ASSETS_DIR, "second_hand.png"))
+        pos_x, pos_y = hand_pos
+        layer = Image.new("RGBA", (SCREEN, SCREEN), (0, 0, 0, 0))
+        layer.alpha_composite(hand, (int(pos_x), int(pos_y)))
+        # rotate the whole layer around the screen center (== hand's pivot);
+        # clock angles are clockwise from 12 o'clock, PIL rotates CCW, so negate.
+        rotated = layer.rotate(-hand_angle, resample=Image.BICUBIC, center=(CENTER, CENTER))
+        bg.alpha_composite(rotated, (0, 0))
 
     def paste_pair(prefix, s, top_y):
         imgs = [Image.open(os.path.join(ASSETS_DIR, f"{prefix}_{c}.png")) for c in s]
@@ -175,6 +215,9 @@ def main():
 
     render_icon(h_row, os.path.join(ASSETS_DIR, "icon.png"))
 
+    hand_pos_x, hand_pos_y = render_second_hand(os.path.join(ASSETS_DIR, "second_hand.png"))
+    print(f"second hand pos_x={hand_pos_x:.0f} pos_y={hand_pos_y:.0f} (center_x=center_y={CENTER:.0f})")
+
     widest_pair = max(hour_widths.values()) + H_SPACE
     widest_digit = max(hour_widths, key=hour_widths.get)
     worst_case_pair = widest_digit * 2
@@ -183,9 +226,12 @@ def main():
     compose_scene(h_row, worst_case_pair, worst_case_pair, debug=True).save(
         os.path.join(PREVIEW_DIR, "preview_worstcase.png")
     )
+    compose_scene(
+        h_row, "10", "09", hand_angle=42, hand_pos=(hand_pos_x, hand_pos_y)
+    ).save(os.path.join(PREVIEW_DIR, "preview_with_hand.png"))
     print(f"widest single digit: '{widest_digit}' ({hour_widths[widest_digit]}px)")
     print(f"worst-case pair used for stress preview: '{worst_case_pair}'")
-    print("wrote preview/preview_10_09.png and preview/preview_worstcase.png")
+    print("wrote preview/preview_10_09.png, preview_worstcase.png, preview_with_hand.png")
 
 
 if __name__ == "__main__":
